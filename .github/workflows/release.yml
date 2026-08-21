@@ -5,8 +5,35 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-targets --locked
+
   build:
+    needs: validate
     strategy:
       matrix:
         include:
@@ -21,7 +48,7 @@ jobs:
             artifact: zatsu-x86_64-linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -29,7 +56,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package tarball
         run: |
@@ -73,7 +100,7 @@ jobs:
     steps:
       - name: Get version
         id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
       - name: Wait for release assets
         run: sleep 10
@@ -90,9 +117,11 @@ jobs:
           curl -L -o assets/zatsu-x86_64-linux.tar.gz \
             "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-x86_64-linux.tar.gz"
 
-          echo "sha256_aarch64_darwin=$(sha256sum assets/zatsu-aarch64-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "sha256_x86_64_darwin=$(sha256sum assets/zatsu-x86_64-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "sha256_x86_64_linux=$(sha256sum assets/zatsu-x86_64-linux.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          {
+            echo "sha256_aarch64_darwin=$(sha256sum assets/zatsu-aarch64-darwin.tar.gz | cut -d' ' -f1)"
+            echo "sha256_x86_64_darwin=$(sha256sum assets/zatsu-x86_64-darwin.tar.gz | cut -d' ' -f1)"
+            echo "sha256_x86_64_linux=$(sha256sum assets/zatsu-x86_64-linux.tar.gz | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Generate Homebrew formula
         run: |
