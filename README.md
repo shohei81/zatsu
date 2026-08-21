@@ -16,6 +16,14 @@ stable and suitable for humans and coding agents.
 
 ## Installation
 
+### Homebrew
+
+```shell
+brew install shohei81/tap/zatsu
+```
+
+### Cargo
+
 ```shell
 cargo install --git https://github.com/shohei81/zatsu
 ```

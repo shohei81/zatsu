@@ -162,17 +162,29 @@ jobs:
           end
           FORMULA
 
-      - name: Push to Homebrew tap
-        uses: cpina/github-action-push-to-another-repository@main
+      - name: Configure Homebrew tap deploy key
         env:
-          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        with:
-          source-directory: Formula
-          destination-github-username: ${{ github.repository_owner }}
-          destination-repository-name: homebrew-tap
-          target-branch: main
-          target-directory: Formula
-          commit-message: "zatsu ${{ steps.version.outputs.version }}"
-          user-email: github-actions[bot]@users.noreply.github.com
-          user-name: github-actions[bot]
-          create-target-branch-if-needed: true
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H github.com >> "$HOME/.ssh/known_hosts"
+
+      - name: Push formula to Homebrew tap
+        run: |
+          git clone --depth 1 \
+            "git@github.com:${{ github.repository_owner }}/homebrew-tap.git" tap
+          install -d tap/Formula
+          cp Formula/zatsu.rb tap/Formula/zatsu.rb
+          git -C tap config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap add Formula/zatsu.rb
+
+          if git -C tap diff --cached --quiet; then
+            echo "Homebrew formula is already up to date"
+            exit 0
+          fi
+
+          git -C tap commit -m "zatsu ${{ steps.version.outputs.version }}"
+          git -C tap push origin main
