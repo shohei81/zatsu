@@ -22,9 +22,11 @@ fn help_is_available_with_short_and_long_flags() {
         assert!(output.status.success(), "{}", stderr(&output));
 
         let help = stdout(&output);
-        assert!(help.contains("Usage: zatsu [PATH]"), "{help}");
+        assert!(help.contains("Usage: zatsu [OPTIONS] [PATH]"), "{help}");
         assert!(help.contains("-h, --help"), "{help}");
         assert!(help.contains("-V, --version"), "{help}");
+        assert!(help.contains("-d, --max-depth <N>"), "{help}");
+        assert!(help.contains("-l, --max-lines <N>"), "{help}");
     }
 }
 
@@ -73,4 +75,48 @@ fn double_dash_allows_paths_that_start_with_a_hyphen() {
 
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("fn hyphenated_path()"));
+}
+
+#[test]
+fn max_depth_limits_directory_output() {
+    let output = run(&["--max-depth", "1", "tests/fixtures/repository"]);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let output = stdout(&output);
+    assert!(output.contains("src/"), "{output}");
+    assert!(output.contains("… (max depth reached)"), "{output}");
+    assert!(!output.contains("nested.py"), "{output}");
+}
+
+#[test]
+fn max_depth_is_rejected_in_file_mode() {
+    let output = run(&["--max-depth", "1", "src/lib.rs"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let error = stderr(&output);
+    assert!(
+        error.contains("--max-depth can only be used with a directory"),
+        "{error}"
+    );
+}
+
+#[test]
+fn max_lines_limits_file_output() {
+    let output = run(&["--max-lines", "1", "tests/fixtures/sample.rs"]);
+
+    assert!(output.status.success(), "{}", stderr(&output));
+    let output = stdout(&output);
+    assert_eq!(output.lines().count(), 2, "{output}");
+    assert!(
+        output.ends_with("… (output truncated after 1 line)\n"),
+        "{output}"
+    );
+}
+
+#[test]
+fn max_lines_must_be_positive() {
+    let output = run(&["--max-lines", "0"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("must be at least 1"));
 }

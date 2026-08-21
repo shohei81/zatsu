@@ -3,7 +3,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use zatsu::repository::write_repository_outline;
+use zatsu::repository::{
+    RepositoryOutlineOptions, write_repository_outline, write_repository_outline_with_options,
+};
 
 /// A copy of the checked-in fixture with a malformed binary file added.
 ///
@@ -68,6 +70,16 @@ fn render_repository(fixture: &RepositoryFixture) -> String {
     String::from_utf8(output).expect("repository outline should be UTF-8")
 }
 
+fn render_repository_with_options(
+    fixture: &RepositoryFixture,
+    options: RepositoryOutlineOptions,
+) -> String {
+    let mut output = Vec::new();
+    write_repository_outline_with_options(&fixture.root, &options, &mut output)
+        .expect("write repository outline with options");
+    String::from_utf8(output).expect("repository outline should be UTF-8")
+}
+
 #[test]
 fn repository_outline_contains_tree_and_supported_file_symbols() {
     let fixture = RepositoryFixture::new();
@@ -119,4 +131,59 @@ fn repository_outline_skips_unsupported_and_binary_content_safely() {
         !output.contains(".git/") && !output.contains("VCS_METADATA_MARKER"),
         "VCS metadata must be omitted:\n{output}"
     );
+}
+
+#[test]
+fn max_depth_prunes_traversal_and_marks_directories_with_omitted_entries() {
+    let fixture = RepositoryFixture::new();
+    let output = render_repository_with_options(
+        &fixture,
+        RepositoryOutlineOptions {
+            max_depth: Some(1),
+            ..RepositoryOutlineOptions::default()
+        },
+    );
+    let body = output.lines().skip(1).collect::<Vec<_>>().join("\n");
+
+    assert_eq!(
+        body,
+        "├── assets/\n\
+         │   └── … (max depth reached)\n\
+         ├── docs/\n\
+         │   └── … (max depth reached)\n\
+         ├── src/\n\
+         │   └── … (max depth reached)\n\
+         └── .gitignore"
+    );
+}
+
+#[test]
+fn max_depth_zero_prints_only_the_repository_root() {
+    let fixture = RepositoryFixture::new();
+    let output = render_repository_with_options(
+        &fixture,
+        RepositoryOutlineOptions {
+            max_depth: Some(0),
+            ..RepositoryOutlineOptions::default()
+        },
+    );
+
+    assert_eq!(output.lines().count(), 1, "{output}");
+    assert!(output.ends_with("/\n"), "{output}");
+}
+
+#[test]
+fn max_lines_stops_rendering_and_reports_truncation() {
+    let fixture = RepositoryFixture::new();
+    let output = render_repository_with_options(
+        &fixture,
+        RepositoryOutlineOptions {
+            max_lines: Some(4),
+            ..RepositoryOutlineOptions::default()
+        },
+    );
+    let lines = output.lines().collect::<Vec<_>>();
+
+    assert_eq!(lines.len(), 5, "{output}");
+    assert_eq!(lines.last(), Some(&"… (output truncated after 4 lines)"));
 }
