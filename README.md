@@ -86,11 +86,31 @@ zatsu -- ./-example.rs
 ```
 
 Directory traversal respects `.gitignore`; ignored files are not included in
-the tree or outlined. Supported languages are JavaScript, TypeScript, Rust,
-Python, Go, Java, C, C++, C#, Swift, Kotlin, Haskell, Ruby, and Markdown.
+the tree or outlined.
 
 Only public/exported symbols are shown where the language supports visibility
 markers. Struct fields, enum variants, and interface members may be included.
+
+## Supported languages
+
+| Language | Extensions |
+| --- | --- |
+| JavaScript | `.js`, `.jsx`, `.cjs`, `.mjs` |
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
+| Rust | `.rs` |
+| Python | `.py` |
+| Go | `.go` |
+| Java | `.java` |
+| C | `.c`, `.h` |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx` |
+| C# | `.cs` |
+| Swift | `.swift` |
+| Kotlin | `.kt`, `.kts` |
+| Haskell | `.hs` |
+| Ruby | `.rb` |
+| Markdown | `.md`, `.markdown` |
+
+All supported languages are parsed with [tree-sitter](https://tree-sitter.github.io/tree-sitter/).
 
 ## For AI agents
 
