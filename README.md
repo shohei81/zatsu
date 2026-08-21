@@ -5,7 +5,7 @@ repository. In directory mode it prints a compact tree and symbol outlines
 for supported source files; in file mode it prints the outline for one file.
 Files matched by `.gitignore` are excluded from directory output.
 
-![zatsu showing a repository tree and source symbol outlines](assets/zatsu-demo.png)
+![Animated zatsu repository outline demo](assets/zatsu-demo.gif)
 
 The name is a playful continuation of upstream `zat` (from Japanese ざっと,
 “at a glance”) and Japanese 雑 (*zatsu*), meaning “rough” or “informal”.
