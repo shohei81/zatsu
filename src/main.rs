@@ -1,11 +1,24 @@
 mod outline;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use clap::Parser;
 use outline::write_outline;
 use zatsu::lang_for_ext;
 use zatsu::repository::write_repository_outline;
+
+#[derive(Parser)]
+#[command(
+    version,
+    about = "See a repository or source file at a glance",
+    after_help = "Examples:\n  zatsu\n  zatsu .\n  zatsu src/lib.rs"
+)]
+struct Cli {
+    /// File or directory to inspect
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+}
 
 fn print_outline(source: &str, ranges: &[outline::VisibleRange<'_>], prefix: &str) {
     let mut out = std::io::stdout().lock();
@@ -35,12 +48,8 @@ fn view_file(path: &Path) {
 }
 
 fn main() {
-    let path_arg = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("Usage: zatsu <path>");
-        std::process::exit(1);
-    });
-
-    let path = Path::new(&path_arg);
+    let cli = Cli::parse();
+    let path = cli.path.as_path();
     if !path.exists() {
         eprintln!("zatsu: {}: No such file or directory", path.display());
         std::process::exit(1);
