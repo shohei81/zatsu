@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: zatsu-aarch64-darwin
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: zatsu-x86_64-darwin
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: zatsu-x86_64-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package tarball
+        run: |
+          mkdir -p pkg
+          cp target/${{ matrix.target }}/release/zatsu pkg/zatsu
+          tar -czvf "${{ matrix.artifact }}.tar.gz" -C pkg zatsu
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: "*.tar.gz"
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            cp "$dir"*.tar.gz release/
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Wait for release assets
+        run: sleep 10
+
+      - name: Download release assets and calculate SHA256
+        id: sha
+        run: |
+          mkdir -p assets
+
+          curl -L -o assets/zatsu-aarch64-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-aarch64-darwin.tar.gz"
+          curl -L -o assets/zatsu-x86_64-darwin.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-x86_64-darwin.tar.gz"
+          curl -L -o assets/zatsu-x86_64-linux.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-x86_64-linux.tar.gz"
+
+          echo "sha256_aarch64_darwin=$(sha256sum assets/zatsu-aarch64-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "sha256_x86_64_darwin=$(sha256sum assets/zatsu-x86_64-darwin.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "sha256_x86_64_linux=$(sha256sum assets/zatsu-x86_64-linux.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Generate Homebrew formula
+        run: |
+          mkdir -p Formula
+          cat > Formula/zatsu.rb << 'FORMULA'
+          class Zatsu < Formula
+            desc "Code outline viewer for LLMs"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${{ steps.version.outputs.version }}"
+            license "GPL-3.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-aarch64-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha256_aarch64_darwin }}"
+              end
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-x86_64-darwin.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha256_x86_64_darwin }}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/zatsu-x86_64-linux.tar.gz"
+                sha256 "${{ steps.sha.outputs.sha256_x86_64_linux }}"
+              end
+            end
+
+            def install
+              bin.install "zatsu"
+            end
+
+            test do
+              (testpath/"test.ts").write("export function hello(): string { return 'hi'; }\n")
+              assert_match "function hello", shell_output("#{bin}/zatsu #{testpath}/test.ts")
+            end
+          end
+          FORMULA
+
+      - name: Push to Homebrew tap
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          source-directory: Formula
+          destination-github-username: ${{ github.repository_owner }}
+          destination-repository-name: homebrew-tap
+          target-branch: main
+          target-directory: Formula
+          commit-message: "zatsu ${{ steps.version.outputs.version }}"
+          user-email: github-actions[bot]@users.noreply.github.com
+          user-name: github-actions[bot]
+          create-target-branch-if-needed: true
