@@ -46,14 +46,24 @@ nix build github:shohei81/zatsu
 Pass a repository directory to show its file tree and source outlines:
 
 ```shell
+zatsu
 zatsu .
 zatsu path/to/repository
 ```
+
+With no path, `zatsu` inspects the current directory. Standard CLI metadata is
+available with `zatsu --help` and `zatsu --version`.
 
 Pass a source file to use file mode:
 
 ```shell
 zatsu src/lib.rs
+```
+
+Use `--` before a path that starts with a hyphen:
+
+```shell
+zatsu -- ./-example.rs
 ```
 
 Directory traversal respects `.gitignore`; ignored files are not included in
