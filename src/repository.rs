@@ -13,6 +13,7 @@ use crate::outline::{extract_outline, parse, write_outline};
 struct Directory {
     directories: BTreeMap<String, Directory>,
     files: BTreeSet<String>,
+    truncated: bool,
 }
 
 impl Directory {
@@ -38,6 +39,56 @@ impl Directory {
             }
         }
     }
+
+    fn mark_truncated(&mut self, relative_path: &Path) {
+        let mut directory = self;
+
+        for component in relative_path.components() {
+            let name = component.as_os_str().to_string_lossy().into_owned();
+            directory = directory.directories.entry(name).or_default();
+        }
+
+        directory.truncated = true;
+    }
+}
+
+/// Limits applied while rendering a repository outline.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RepositoryOutlineOptions {
+    /// Maximum tree depth, where the repository root is depth 0.
+    pub max_depth: Option<usize>,
+    /// Maximum number of normal output lines, excluding a truncation notice.
+    pub max_lines: Option<usize>,
+}
+
+struct RenderState {
+    max_lines: Option<usize>,
+    lines_written: usize,
+    truncated: bool,
+}
+
+impl RenderState {
+    fn new(max_lines: Option<usize>) -> Self {
+        Self {
+            max_lines,
+            lines_written: 0,
+            truncated: false,
+        }
+    }
+
+    fn write_line(&mut self, line: &str, writer: &mut impl Write) -> io::Result<bool> {
+        if self
+            .max_lines
+            .is_some_and(|max_lines| self.lines_written >= max_lines)
+        {
+            self.truncated = true;
+            return Ok(false);
+        }
+
+        writeln!(writer, "{line}")?;
+        self.lines_written += 1;
+        Ok(true)
+    }
 }
 
 /// Write a deterministic, repository-level view of `root`.
@@ -45,6 +96,15 @@ impl Directory {
 /// Files ignored by Git are omitted. Every remaining file is shown in the tree;
 /// supported source files also include the same symbol outline as file mode.
 pub fn write_repository_outline(root: &Path, writer: &mut impl Write) -> io::Result<()> {
+    write_repository_outline_with_options(root, &RepositoryOutlineOptions::default(), writer)
+}
+
+/// Write a deterministic, repository-level view of `root` with output limits.
+pub fn write_repository_outline_with_options(
+    root: &Path,
+    options: &RepositoryOutlineOptions,
+    writer: &mut impl Write,
+) -> io::Result<()> {
     let mut tree = Directory::default();
     let mut source_paths = BTreeMap::new();
 
@@ -57,6 +117,13 @@ pub fn write_repository_outline(root: &Path, writer: &mut impl Write) -> io::Res
         .require_git(false)
         .parents(true)
         .filter_entry(is_not_vcs_metadata);
+    builder.max_depth(options.max_depth.map(|depth| {
+        if depth == 0 {
+            0
+        } else {
+            depth.saturating_add(1)
+        }
+    }));
 
     for result in builder.build() {
         let entry = result.map_err(ignore_error_to_io)?;
@@ -65,6 +132,20 @@ pub fn write_repository_outline(root: &Path, writer: &mut impl Write) -> io::Res
             .strip_prefix(root)
             .map_err(|error| io::Error::other(error.to_string()))?;
         if relative_path.as_os_str().is_empty() {
+            continue;
+        }
+
+        if options
+            .max_depth
+            .is_some_and(|max_depth| entry.depth() > max_depth)
+        {
+            if entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_dir() || file_type.is_file())
+                && let Some(parent) = relative_path.parent()
+            {
+                tree.mark_truncated(parent);
+            }
             continue;
         }
 
@@ -88,8 +169,18 @@ pub fn write_repository_outline(root: &Path, writer: &mut impl Write) -> io::Res
         }
     }
 
-    writeln!(writer, "{}/", root_name(root))?;
-    write_directory(&tree, Path::new(""), &source_paths, "", writer)
+    let mut state = RenderState::new(options.max_lines);
+    if state.write_line(&format!("{}/", root_name(root)), writer)? {
+        write_directory(&tree, Path::new(""), &source_paths, "", &mut state, writer)?;
+    }
+    if state.truncated {
+        writeln!(
+            writer,
+            "{}",
+            truncation_message(options.max_lines.unwrap_or_default())
+        )?;
+    }
+    Ok(())
 }
 
 fn write_directory(
@@ -97,32 +188,61 @@ fn write_directory(
     relative_path: &Path,
     source_paths: &BTreeMap<String, PathBuf>,
     prefix: &str,
+    state: &mut RenderState,
     writer: &mut impl Write,
 ) -> io::Result<()> {
-    let child_count = directory.directories.len() + directory.files.len();
+    let child_count =
+        directory.directories.len() + directory.files.len() + usize::from(directory.truncated);
     let mut child_index = 0;
 
     for (name, child) in &directory.directories {
         child_index += 1;
         let is_last = child_index == child_count;
-        writeln!(writer, "{prefix}{}{name}/", connector(is_last))?;
+        if !state.write_line(&format!("{prefix}{}{name}/", connector(is_last)), writer)? {
+            return Ok(());
+        }
 
         let child_path = relative_path.join(name);
         let child_prefix = format!("{prefix}{}", continuation(is_last));
-        write_directory(child, &child_path, source_paths, &child_prefix, writer)?;
+        write_directory(
+            child,
+            &child_path,
+            source_paths,
+            &child_prefix,
+            state,
+            writer,
+        )?;
+        if state.truncated {
+            return Ok(());
+        }
     }
 
     for name in &directory.files {
         child_index += 1;
         let is_last = child_index == child_count;
-        writeln!(writer, "{prefix}{}{name}", connector(is_last))?;
+        if !state.write_line(&format!("{prefix}{}{name}", connector(is_last)), writer)? {
+            return Ok(());
+        }
 
         let file_path = relative_path.join(name);
         if let Some(path) = source_paths.get(&path_key(&file_path))
             && let Some(outline) = outline_for_file(path)
         {
-            write_outline_lines(&outline, prefix, is_last, writer)?;
+            write_outline_lines(&outline, prefix, is_last, state, writer)?;
+            if state.truncated {
+                return Ok(());
+            }
         }
+    }
+
+    if directory.truncated {
+        state.write_line(
+            &format!(
+                "{prefix}{}… (max depth reached)",
+                connector(child_index + 1 == child_count)
+            ),
+            writer,
+        )?;
     }
 
     Ok(())
@@ -132,6 +252,7 @@ fn write_outline_lines(
     outline: &str,
     prefix: &str,
     file_is_last: bool,
+    state: &mut RenderState,
     writer: &mut impl Write,
 ) -> io::Result<()> {
     let lines: Vec<_> = outline.lines().filter(|line| !line.is_empty()).collect();
@@ -139,10 +260,20 @@ fn write_outline_lines(
 
     for (index, line) in lines.iter().enumerate() {
         let is_last = index + 1 == lines.len();
-        writeln!(writer, "{outline_prefix}{}{line}", connector(is_last))?;
+        if !state.write_line(
+            &format!("{outline_prefix}{}{line}", connector(is_last)),
+            writer,
+        )? {
+            break;
+        }
     }
 
     Ok(())
+}
+
+pub fn truncation_message(max_lines: usize) -> String {
+    let unit = if max_lines == 1 { "line" } else { "lines" };
+    format!("… (output truncated after {max_lines} {unit})")
 }
 
 fn outline_for_file(path: &Path) -> Option<String> {

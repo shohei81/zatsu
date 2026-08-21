@@ -10,9 +10,9 @@ The name is a playful continuation of upstream `zat` (from Japanese ざっと,
 
 ## Status
 
-This repository contains the v0.1 MVP: repository directory mode, file mode,
-symbol outlines, and `.gitignore`-aware traversal. Output is intended to be
-stable and suitable for humans and coding agents.
+This repository contains the v0.1 CLI: repository directory mode, file mode,
+symbol outlines, `.gitignore`-aware traversal, and output limits. Output is
+intended to be stable and suitable for humans and coding agents.
 
 ## Installation
 
@@ -53,6 +53,23 @@ zatsu path/to/repository
 
 With no path, `zatsu` inspects the current directory. Standard CLI metadata is
 available with `zatsu --help` and `zatsu --version`.
+
+Limit how deeply directory mode traverses a repository with `--max-depth` (or
+`-d`). The root is depth 0, so `--max-depth 0` prints only the root. A directory
+whose contents were omitted is marked with `… (max depth reached)`.
+
+```shell
+zatsu --max-depth 2 .
+```
+
+Limit normal output with `--max-lines` (or `-l`). This works in both directory
+and file mode. If more output exists, `zatsu` adds one truncation notice after
+the requested number of lines.
+
+```shell
+zatsu --max-lines 200 .
+zatsu -d 3 -l 200 path/to/repository
+```
 
 Pass a source file to use file mode:
 
