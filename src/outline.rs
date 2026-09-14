@@ -180,7 +180,7 @@ pub fn extract_outline<'a>(
         let mut match_name: Option<String> = None;
         let mut match_show_if_ref_id: Option<usize> = None;
 
-        for cap in m.captures {
+        for cap in m.captures() {
             let capture_name: &str = query.capture_names()[cap.index as usize];
             let node = cap.node;
 
